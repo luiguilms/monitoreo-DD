@@ -1,0 +1,19 @@
+{
+  "name": "monitorear-dd",
+  "version": "1.0.0",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "description": "",
+  "dependencies": {
+    "dotenv": "^17.0.1",
+    "nodemailer": "^7.0.4",
+    "oracledb": "^6.8.0",
+    "repomix": "^1.0.0",
+    "ssh2": "^1.16.0"
+  }
+}
