@@ -18,62 +18,66 @@ class ServerMonitor {
     }
   }
 
-  // Enviar un correo con las estadísticas de todos los servidores
   async sendEmail(allServerStats) {
-    const transporter = nodemailer.createTransport({
-      host: '10.0.200.68',
-      port: 25,
-      secure: false,
-      tls: { rejectUnauthorized: false }
-    });
+  const transporter = nodemailer.createTransport({
+    host: '10.0.200.68',
+    port: 25,
+    secure: false,
+    tls: { rejectUnauthorized: false }
+  });
 
-    // Crear el HTML con las estadísticas de todos los servidores
-    let htmlContent = `
-      <h1>Reporte de Espacio Data Domain - ${new Date().toISOString().split('T')[0]}</h1>
-      <h3>Estadísticas de los Servidores</h3>
-      <table border="1" cellpadding="5">
-        <tr>
-          <th>Hostname</th>
-          <th>IP</th>
-          <th>Tamaño Total (GB)</th>
-          <th>Espacio Usado (GB)</th>
-          <th>Espacio Disponible (GB)</th>
-          <th>Porcentaje de Uso</th>
-          <th>Espacio Limpio (GB)</th>
-        </tr>`;
+  // Crear el HTML con las estadísticas de todos los servidores
+  let htmlContent = `
+    <h1>Reporte de Espacio Data Domain - ${new Date().toISOString().split('T')[0]}</h1>
+    <h3>Estadísticas de los Servidores</h3>
+    <table border="1" cellpadding="5">
+      <tr>
+        <th>Hostname</th>
+        <th>IP</th>
+        <th>Tamaño Total (GB)</th>
+        <th>Espacio Usado (GB)</th>
+        <th>Espacio Disponible (GB)</th>
+        <th>Porcentaje de Uso</th>
+        <th>Espacio Limpio (GB)</th>
+      </tr>`;
 
-    // Agregar los datos de cada servidor en la tabla HTML
-    allServerStats.forEach(stats => {
+  // Agregar los datos de cada servidor en la tabla HTML
+  for (const stats of allServerStats) {
+    // Obtener el hostname e ip usando el id_servidor
+    const serverData = await this.db.getServerById(stats.id_servidor);
+    
+    if (serverData) {
       htmlContent += `
         <tr>
-          <td>${stats.hostname}</td>
-          <td>${stats.ip}</td>
+          <td>${serverData.hostname}</td>
+          <td>${serverData.ip}</td>
           <td>${stats.size_gb}</td>
           <td>${stats.used_gb}</td>
           <td>${stats.avail_gb}</td>
           <td>${stats.use_percent}%</td>
           <td>${stats.cleanable_gb}</td>
         </tr>`;
-    });
-
-    htmlContent += `</table>`;
-
-    const mailOptions = {
-      from: 'igs_llupacca@cajaarequipa.pe',
-      to: 'igs_llupacca@cajaarequipa.pe',
-      subject: `Reporte de Espacio Data Domain - ${new Date().toISOString().split('T')[0]}`,
-      html: htmlContent
-    };
-
-    try {
-      const info = await transporter.sendMail(mailOptions);
-      console.log('Correo enviado exitosamente');
-      return { success: true };
-    } catch (error) {
-      console.error('Error al enviar correo:', error);
-      return { success: false, error: error.message };
     }
   }
+
+  htmlContent += `</table>`;
+
+  const mailOptions = {
+    from: 'igs_llupacca@cajaarequipa.pe',
+    to: 'igs_llupacca@cajaarequipa.pe, kcabrerac@cajaarequipa.pe, ehidalgom@cajaarequipa.pe',
+    subject: `Reporte de Espacio Data Domain - ${new Date().toISOString().split('T')[0]}`,
+    html: htmlContent
+  };
+
+  try {
+    const info = await transporter.sendMail(mailOptions);
+    console.log('Correo enviado exitosamente');
+    return { success: true };
+  } catch (error) {
+    console.error('Error al enviar correo:', error);
+    return { success: false, error: error.message };
+  }
+}
 
   // Monitorear un servidor específico
   async monitorServer(serverConfig) {
@@ -92,15 +96,18 @@ class ServerMonitor {
         used_gb: diskInfo.used_gb,
         avail_gb: diskInfo.avail_gb,
         use_percent: diskInfo.use_percent,
-        cleanable_gb: diskInfo.cleanable_gb,
-        hostname: serverConfig.hostname,
-        ip: serverConfig.ip
+        cleanable_gb: diskInfo.cleanable_gb
       };
 
       // Insertar en la base de datos
       await this.db.insertMonitoreo(monitoringData);
       
-      return monitoringData;
+      // Retornar objeto completo con info para el email
+    return {
+      ...monitoringData,
+      hostname: serverConfig.hostname,
+      ip: serverConfig.ip
+    };
     } catch (error) {
       console.error(`❌ Error monitoreando ${serverConfig.hostname}:`, error.message);
       return null;

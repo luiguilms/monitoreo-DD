@@ -41,7 +41,29 @@ class Database {
       throw error;
     }
   }
+// Obtener el servidor por ID
+  async getServerById(id_servidor) {
+    const sql = 'SELECT hostname, ip FROM servidores WHERE id_servidor = :id_servidor';
 
+    try {
+      const result = await this.connection.execute(sql, [id_servidor]);
+      
+      if (result.rows.length === 0) {
+        console.log(`❌ No se encontró el servidor con ID ${id_servidor}`);
+        return null;
+      }
+
+      // El primer (y único) resultado
+      const row = result.rows[0];
+      return {
+        hostname: row[0],
+        ip: row[1]
+      };
+    } catch (error) {
+      console.error('❌ Error obteniendo datos del servidor:', error.message);
+      throw error;
+    }
+  }
   // Insertar datos de monitoreo
 async insertMonitoreo(data) {
   const sql = `
