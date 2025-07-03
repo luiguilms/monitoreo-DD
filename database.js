@@ -41,6 +41,28 @@ class Database {
       throw error;
     }
   }
+  // En database.js
+async getHistorialEspacio(id_servidor, dias = 7) {
+    const sql = `
+        SELECT 
+            TRUNC(fecha_ejecucion) as fecha,
+            AVG(used_gb) as used_gb,
+            AVG(size_gb) as size_gb
+        FROM monitoreo
+        WHERE id_servidor = :id_servidor
+        AND fecha_ejecucion >= SYSDATE - :dias
+        GROUP BY TRUNC(fecha_ejecucion)
+        ORDER BY fecha ASC
+    `;
+    
+    const result = await this.connection.execute(sql, [id_servidor, dias]);
+    return result.rows.map(row => ({
+        fecha: row[0],
+        used_gb: row[1],
+        size_gb: row[2],
+        porcentaje: ((row[1]/row[2])*100).toFixed(2)
+    }));
+}
 // Obtener el servidor por ID
   async getServerById(id_servidor) {
     const sql = 'SELECT hostname, ip FROM servidores WHERE id_servidor = :id_servidor';

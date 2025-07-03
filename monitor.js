@@ -1,7 +1,85 @@
 const nodemailer = require('nodemailer');
 const Database = require('./database');
 const SSHService = require('./sshService');
+const { ChartJSNodeCanvas } = require('chartjs-node-canvas');
+// Configuración para generar gráficos como imágenes
+const chartJSNodeCanvas = new ChartJSNodeCanvas({ 
+  width: 800, 
+  height: 400,
+  backgroundColour: 'white'
+});
 
+// Función para generar gráfico como imagen base64
+async function generarGraficoImagen(historial, hostname) {
+    const labels = historial.map(item => 
+        new Date(item.fecha).toLocaleDateString('es-PE', { weekday: 'short', month: 'short', day: 'numeric' })
+    );
+    
+    const dataUsed = historial.map(item => parseFloat(item.used_gb));
+    const dataTotal = historial.map(item => parseFloat(item.size_gb));
+
+    const configuration = {
+        type: 'line',
+        data: {
+            labels: labels,
+            datasets: [
+                {
+                    label: 'Espacio Total (GB)',
+                    data: dataTotal,
+                    borderColor: '#36A2EB',
+                    backgroundColor: 'rgba(54, 162, 235, 0.1)',
+                    fill: true,
+                    tension: 0.4
+                },
+                {
+                    label: 'Espacio Usado (GB)',
+                    data: dataUsed,
+                    borderColor: '#FF6384',
+                    backgroundColor: 'rgba(255, 99, 132, 0.1)',
+                    fill: true,
+                    tension: 0.4
+                }
+            ]
+        },
+        options: {
+            responsive: false,
+            plugins: {
+                title: {
+                    display: true,
+                    text: `Evolución del Espacio - ${hostname}`,
+                    font: { size: 16 }
+                },
+                legend: {
+                    display: true,
+                    position: 'top'
+                }
+            },
+            scales: {
+                y: {
+                    beginAtZero: false,
+                    title: {
+                        display: true,
+                        text: 'Espacio (GB)'
+                    }
+                },
+                x: {
+                    title: {
+                        display: true,
+                        text: 'Fecha'
+                    }
+                }
+            }
+        }
+    };
+
+    try {
+        const imageBuffer = await chartJSNodeCanvas.renderToBuffer(configuration);
+        return imageBuffer.toString('base64');
+    } catch (error) {
+        console.error(`❌ Error generando gráfico para ${hostname}:`, error);
+        return null;
+    }
+}
 class ServerMonitor {
   constructor() {
     this.db = new Database();
@@ -20,64 +98,129 @@ class ServerMonitor {
 
   async sendEmail(allServerStats) {
     const transporter = nodemailer.createTransport({
-      host: '10.0.200.68',
-      port: 25,
-      secure: false,
-      tls: { rejectUnauthorized: false }
+        host: '10.0.200.68',
+        port: 25,
+        secure: false,
+        tls: { rejectUnauthorized: false }
     });
 
-    // Crear el HTML con las estadísticas de todos los servidores
-    let htmlContent = `
-    <h1>Alerta de Espacio Data Domain - ${new Date().toISOString().split('T')[0]}</h1>
-    <h3>Estadísticas de los Servidores</h3>
-    <table border="1" cellpadding="5">
-      <tr>
-        <th>Hostname</th>
-        <th>IP</th>
-        <th>Tamaño Total (GB)</th>
-        <th>Espacio Usado (GB)</th>
-        <th>Espacio Disponible (GB)</th>
-        <th>Porcentaje de Uso</th>
-        <th>Espacio Limpio (GB)</th>
-      </tr>`;
-
-    // Agregar los datos de cada servidor en la tabla HTML
-    for (const stats of allServerStats) {
-      // Obtener el hostname e ip usando el id_servidor
-      const serverData = await this.db.getServerById(stats.id_servidor);
-
-      if (serverData) {
-        htmlContent += `
-        <tr>
-          <td>${serverData.hostname}</td>
-          <td>${serverData.ip}</td>
-          <td>${stats.size_gb}</td>
-          <td>${stats.used_gb}</td>
-          <td>${stats.avail_gb}</td>
-          <td>${stats.use_percent}%</td>
-          <td>${stats.cleanable_gb}</td>
-        </tr>`;
-      }
+    console.log('📊 Generando gráficos como imágenes...');
+    
+    // Generar gráficos como imágenes base64
+    const attachments = [];
+    let graficosHTML = '';
+    
+    for (let i = 0; i < allServerStats.length; i++) {
+        const server = allServerStats[i];
+        const historial = await this.db.getHistorialEspacio(server.id_servidor);
+        
+        if (historial && historial.length > 0) {
+            const imagenBase64 = await generarGraficoImagen(historial, server.hostname);
+            
+            if (imagenBase64) {
+                const imageName = `grafico_${server.hostname.replace(/[^a-zA-Z0-9]/g, '_')}.png`;
+                
+                // Agregar como attachment
+                attachments.push({
+                    filename: imageName,
+                    content: imagenBase64,
+                    encoding: 'base64',
+                    cid: `grafico_${i}` // Content ID para referenciar en HTML
+                });
+                
+                // Agregar HTML que referencia la imagen
+                graficosHTML += `
+                <div style="margin-bottom: 40px; border-bottom: 1px solid #eee; padding-bottom: 20px;">
+                    <h2>${server.hostname} (${server.ip})</h2>
+                    <div style="text-align: center;">
+                        <img src="cid:grafico_${i}" alt="Gráfico ${server.hostname}" style="max-width: 100%; height: auto;">
+                    </div>
+                    <p style="color: #666; font-size: 12px; text-align: center;">
+                        Evolución del espacio en disco de los últimos 7 días
+                    </p>
+                </div>`;
+            } else {
+                graficosHTML += `
+                <div style="margin-bottom: 40px; border-bottom: 1px solid #eee; padding-bottom: 20px;">
+                    <h2>${server.hostname} (${server.ip})</h2>
+                    <p style="color: #ff6b6b; text-align: center;">❌ No se pudo generar el gráfico</p>
+                </div>`;
+            }
+        } else {
+            graficosHTML += `
+            <div style="margin-bottom: 40px; border-bottom: 1px solid #eee; padding-bottom: 20px;">
+                <h2>${server.hostname} (${server.ip})</h2>
+                <p style="color: #ffa726; text-align: center;">⚠️ Sin datos históricos suficientes</p>
+            </div>`;
+        }
     }
 
-    htmlContent += `</table>`;
-
     const mailOptions = {
-      from: 'igs_llupacca@cajaarequipa.pe',
-      to: 'igs_llupacca@cajaarequipa.pe',
-      subject: `Alerta de Espacio Data Domain - ${new Date().toISOString().split('T')[0]}`,
-      html: htmlContent
+        from: 'igs_llupacca@cajaarequipa.pe',
+        to: 'igs_llupacca@cajaarequipa.pe, ehidalgom@cajaarequipa.pe, kcabrerac@cajaarequipa.pe',
+        subject: `Reporte de Espacio Data Domain - ${new Date().toLocaleDateString('es-PE')}`,
+        html: `
+        <div style="font-family: Arial, sans-serif; max-width: 1000px; margin: 0 auto;">
+            <h1 style="color: #2c3e50; text-align: center;">📊 Reporte de Espacio Data Domain</h1>
+            <p style="text-align: center; color: #7f8c8d; font-size: 14px;">
+                Fecha: ${new Date().toLocaleDateString('es-PE', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}
+            </p>
+            
+            <h2 style="color: #34495e;">📈 Estadísticas Actuales</h2>
+            <table border="1" cellpadding="8" cellspacing="0" style="border-collapse: collapse; margin-bottom: 30px; width: 100%; font-size: 12px;">
+                <thead>
+                    <tr style="background-color: #3498db; color: white;">
+                        <th>Hostname</th>
+                        <th>IP</th>
+                        <th>Total (GB)</th>
+                        <th>Usado (GB)</th>
+                        <th>Disponible (GB)</th>
+                        <th>% Uso</th>
+                        <th>Limpieza (GB)</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    ${allServerStats.map(server => {
+                        const colorRow = server.use_percent >= 95 ? '#ffebee' : 
+                                       server.use_percent >= 90 ? '#fff3e0' : '#ffffff';
+                        const colorPercent = server.use_percent >= 95 ? '#d32f2f' : 
+                                           server.use_percent >= 90 ? '#f57c00' : '#388e3c';
+                        
+                        return `
+                        <tr style="background-color: ${colorRow};">
+                            <td><strong>${server.hostname}</strong></td>
+                            <td>${server.ip}</td>
+                            <td>${server.size_gb.toLocaleString('es-PE')}</td>
+                            <td>${server.used_gb.toLocaleString('es-PE')}</td>
+                            <td>${server.avail_gb.toLocaleString('es-PE')}</td>
+                            <td style="color: ${colorPercent}; font-weight: bold;">${server.use_percent}%</td>
+                            <td>${server.cleanable_gb.toLocaleString('es-PE')}</td>
+                        </tr>`;
+                    }).join('')}
+                </tbody>
+            </table>
+            
+            <h2 style="color: #34495e;">📊 Evolución Histórica (Últimos 7 días)</h2>
+            ${graficosHTML}
+            
+            <div style="margin-top: 30px; padding: 15px; background-color: #ecf0f1; border-left: 4px solid #3498db;">
+                <p style="margin: 0; color: #2c3e50; font-size: 12px;">
+                    🤖 <strong>Reporte generado automáticamente</strong><br>
+                    Sistema de Monitoreo Data Domain - Caja Arequipa<br>
+                    Hora de generación: ${new Date().toLocaleString('es-PE')}
+                </p>
+            </div>
+        </div>`,
+        attachments: attachments
     };
 
     try {
-      const info = await transporter.sendMail(mailOptions);
-      console.log('Correo enviado exitosamente');
-      return { success: true };
+        await transporter.sendMail(mailOptions);
+        console.log(`📨 Correo con ${attachments.length} gráficos enviado exitosamente`);
     } catch (error) {
-      console.error('Error al enviar correo:', error);
-      return { success: false, error: error.message };
+        console.error('❌ Error al enviar correo:', error);
     }
-  }
+}
 
   // Monitorear un servidor específico
   async monitorServer(serverConfig) {
@@ -113,6 +256,7 @@ class ServerMonitor {
       return null;
     }
   }
+  
 
   // Ejecutar monitoreo de todos los servidores
   async runMonitoring() {
@@ -186,6 +330,7 @@ class ServerMonitor {
       console.error('❌ Error en el ciclo de monitoreo:', error.message);
     }
   }
+  
 
   // Cerrar conexiones
   async shutdown() {
